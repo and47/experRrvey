@@ -1,14 +1,15 @@
 Package: experRrvey
 Title: (demo) experimenting with survey: EDA, evaluating how attributes influence answer
-Version: 0.0.0.9002
+Version: 0.0.0.9003
 Authors@R: 
     person(given = "and",
            family = "47",
            role = c("aut", "cre"),
            email = "and47@users.noreply.github.com")
 Description: To illustrate capabilities, not a complete work. Any liabilities are waived
-Depends: R (>= 3.5.0)
-Imports: haven, dplyr, ggplot2, ggstance, reshape2, likert, psych, purrr,
+Depends: R (>= 3.5.0),
+         dplyr
+Imports: haven, tidyr, ggplot2, ggstance, reshape2, likert, psych, purrr,
          magrittr, forcats, Hmisc, scales, tibble, zoo, 
          radiant, MASS, ordinal, car, FactoMineR, factoextra, car, RVAideMemoire,
          GPArotation
