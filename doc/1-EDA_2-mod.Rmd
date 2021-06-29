@@ -17,7 +17,6 @@ EDA section provides an idea of how data can be aggregated and looked at to disc
 To-do section mentions by no means complete limitations of this demo and directions of further research required to actually meaningfully apply any of this.
 
 ```{r knitr_setup, include=FALSE}
-#library(knitr)
 knitr::opts_chunk$set(
   comment = NA, 
   cache = FALSE, 
@@ -25,12 +24,19 @@ knitr::opts_chunk$set(
   warning = FALSE,
   dpi = 144
 )
-#library(pander)
 ```
 
 ## External packages
 
-Quick reasoning is provided for each direct use of an external package. Their further dependencies are not listed here:
+Quick reasoning is provided for each direct use of an external package. Their further dependencies are not listed:
+* dplyr, forcats, purrr, magrittr, reshape2, haven: working with data (to-do: use purrr more)
+* ggplot2, ggstance, likert: plots
+* psych, Hmisc: descriptive stats
+* MASS, ordinal, FactoMineR, factoextra, car, RVAideMemoire: models, tests, maybe more technical plots
+* radiant, conjoint: conjoint analysis
+* zoo: mainly for na.omit function
+* knitr, pander, stargazer: were tried to improve/fix some tables or set options for this page
+(incomplete, to-do: remove library() loading below, test relying on Imports)
 
 # Data: brief info & processing
 
@@ -38,7 +44,7 @@ Two available datasets were used separately, however can be more useful combined
 
 ```{r r_setup, echo = FALSE}
 library(radiant)
-#library(experRrvey)
+library(experRrvey)
 library(knitr)
 library(zoo)
 library(reshape2)
@@ -47,18 +53,11 @@ library(reshape2)
 This survey was about a feature set of a possible product. Survey is based on respondents answers: at first to more general questions about themselves and problem a product aims to resolve. Secondly, each respondent ranks several random potential product feature combinations.
 
 ```{r remove_later}
-# path to refs.bib (see above)
-setwd('C:/and/work/hw_ds/inprog')
-source('R/eda_funs.r')
-
-
+#source('R/eda_funs.r')
 library(magrittr)
 library(dplyr)
 library(purrr)
 library(forcats)
-
-#library(reshape2)  # for melt
-library(ggstance)  # for positive_dodgev
 
 
 experiment_data <-
@@ -359,22 +358,17 @@ Given that variance doesn't change much within groups Linear Discriminant Analys
 
 #library(psych)  # dimensionality reduction:
 #library(GPArotation)
-library(FactoMineR)  
-library(factoextra)
-
-library(car)
 #library(Hmisc)
-library(RVAideMemoire)
-
-library(zoo)
 #library(survival)
-
-#library(mvtnorm) ## ? lr4, boot, coxme, knitr, leaps, lmtest, Matrix,
-        #MatrixModels, rgl (>= 0.93.960), sandwich, SparseM, survival,
-        #survey, scales
+#library(mvtnorm)  # leaps, survey, scales
 #library(tibble)
 #library(Formula)
 #library(conjoint)
+library(FactoMineR)  
+library(factoextra)
+library(car)
+library(RVAideMemoire)
+library(zoo)
 
 experiment_data %>% dplyr::select(-response_id) %>% group_by(answer) %>%
                     summarise_all(~sd(as.integer(.)))
@@ -479,7 +473,6 @@ prd_sample <- mdl_data.sens[-spl_indxs,]
 # it is more interesting to check in oos performance than select purely on fit
 # (e.g. lowest IC)
 library(ordinal)
-library(car)
 m1 <-
 clm(formula = answer ~ sprf1 + rtbIs2 + offer1 + I(totalCost < 240),
      data = fit_sample, weights = fit_sample$weights)
