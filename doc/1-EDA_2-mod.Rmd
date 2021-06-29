@@ -2,10 +2,10 @@
 title: "Survey EDA and included attributes/levels' effects on rating"
 output: 
   html_document:
-  toc: TRUE         
-toc_depth: 3        
-toc_float: TRUE
-df_print: paged
+    toc: TRUE         
+    toc_depth: 3        
+    toc_float: TRUE
+    df_print: paged
 bibliography: 'refs.bib'
 ---
   
@@ -14,9 +14,12 @@ This package was prepared in short time and constitutes work in progress but all
 
 EDA section provides an idea of how data can be aggregated and looked at to discover potential relationships. Next section demoes how after EDA and certain other data considerations, application of conjoint analysis (enabled by two freely available R packages) can be done giving a bit different results of how all possible combinations of categorical features are rated by respondents. However, not all attributes/levels are significant, and hence their measured impacts should not be taken as seriously. Finally, to focus on and refine initial estimates of more significant attributes/levels' effects on answer (omitting insignificant ones), some example ordinal regressions can be fitted based on factors suggested by conjoint analysis, and coefficients of a better one can be used in that way.
 
-To-do section mentions by no means complete limitations of this demo and directions of further research required to actually meaningfully apply any of this.
+*To-do* section mentions by no means complete limitations of this demo and directions of further research required to actually meaningfully apply any of this.
+
+When rendering, set `FASTER` to `TRUE` to omit heavier calculations (with them, it can take more than 15 minutes to produce HTML).
 
 ```{r knitr_setup, include=FALSE}
+FASTER <- TRUE
 library(knitr)
 knitr::opts_chunk$set(
   comment = NA, 
@@ -30,6 +33,7 @@ knitr::opts_chunk$set(
 ## External packages
 
 Quick reasoning is provided for each direct use of an external package. Their further dependencies are not listed:
+
 * dplyr, forcats, purrr, magrittr, reshape2, haven: working with data (to-do: use purrr more)
 * ggplot2, ggstance, likert: plots
 * psych, Hmisc: descriptive stats
@@ -37,7 +41,6 @@ Quick reasoning is provided for each direct use of an external package. Their fu
 * radiant, conjoint: conjoint analysis
 * zoo: mainly for na.omit/na.fill functions
 * knitr, pander, stargazer: were tried to improve/fix some tables or set options for this page
-(incomplete, to-do: remove library() loading below, test relying on Imports)
 
 # Data: brief info & processing
 
@@ -50,7 +53,7 @@ This survey was about a feature set of a possible product. Survey is based on re
 library(experRrvey)
 #source('R/eda_funs.r')
 
-library(dplyr); library(forcats); library(purrr); library(magrittr); library(reshape2); library(haven)
+library(forcats); library(purrr); library(magrittr); library(reshape2); library(haven)
 experiment_data <-
   haven::read_sav(system.file(package = 'experRrvey', 'extdata/experiment_data.sav'))
 survey_data <-
@@ -255,7 +258,7 @@ ggplot(mdl_data, aes(x = price, y = outcome)) +
 Here we show how intensities of respondents and each individual response are obtained (calculation may take more than 10 minutes), so it is disabled by default and dataset comes pre-loaded. This can be used for grouping respondents, see section *To-do/More regressions incl. nested or conditional logit models* below on how this can be useful.
 
 <input type=button class=hideshow></input>
-  ```{r all_combos, eval=TRUE, out.width=c('50%', '50%'), fig.show='hold'}
+```{r all_combos, eval=(if (exists('FASTER')) !FASTER else TRUE), out.width=c('50%', '50%'), fig.show='hold'}
 surveyIdxsTbl <- survey_data %>% select(-response_id, -weights) %>% 
   calcIdxsAll() %>% idxList2tbl()  # takes > 5 mins, functions should be made more efficient using dplyr instead of loops
 
@@ -288,7 +291,7 @@ svey_intnsts$category[grep("source|behavior_[1-9]|m2_aware", svey_intnsts$variab
 svey_intnsts$category %<>% as_factor()
 ```
 
-```{r boxplots}
+```{r boxplots, eval=(if (exists('FASTER')) !FASTER else TRUE)}
 # we can see more divisive groups/indices such m2_awareness_4 or 5 and d_employment
 ggplot(svey_intnsts, aes(y = value, x = variable)) + geom_boxplot() +
   facet_wrap(facets = ~category, scale = "free", dir = 'v', labeller = label_both) +
@@ -348,8 +351,6 @@ When dealing with many variables it is often the case that several variables are
 Given that variance doesn't change much within groups Linear Discriminant Analysis (LDA) was considered here. Also, given that we are dealing with more than two categorical variables, Multiple Correspondence Analysis (MCA) was tried. However, these attempts do not appear successful at first glance. For `MASS::lda`, even if they were, coefficients are standardized (the value for each discriminant function is scaled so that their mean value is zero and its variance is one), but `predict` can be used to both test the performance (e.g. by splitting dataset in two parts: fitting and out-of-sample) and more practically calculate the impact, if interpretation is otherwise difficult. Some guidance is available [here.](https://rstudio-pubs-static.s3.amazonaws.com/35817_2552e05f1d4e4db8ba87b334101a43da.html) 
 
 ```{r dim_red}
-
-
 library(FactoMineR)  
 library(factoextra)
 library(car)
@@ -426,7 +427,7 @@ More precise estimation of most material (scale of impact) and significant (cert
 
 ```{r cnjnt_signif, message=FALSE, results='asis'}
 sel.smpl.cnjnt.rad$model_list$full$coeff[,
-                    c('label', 'coefficient', 'p.value')]
+                    c('label', 'coefficient', 'p.value')] %>% kable()
 # bug with significance replaced with NAs
 ```
 
@@ -437,7 +438,7 @@ mdl_data.sens %<>%
   cbind(priceUSD = (as.integer(mdl_data.sens$price) + 1) * 10,
         price3   = ifelse(as.integer(mdl_data.sens$price) == 3L, 1, 0),
         durMns   = as.integer(mdl_data.sens$duration) * 3,
-        dur6M   = ifelse(as.integer(mdl_data.sens$duration) == 2L, 1, 0),
+        dur6M    = ifelse(as.integer(mdl_data.sens$duration) == 2L, 1, 0),
         sprf1    = ifelse(as.integer(mdl_data.sens$social_proof) == 1L, 1, 0), 
         sprf4    = ifelse(as.integer(mdl_data.sens$social_proof) == 4L, 1, 0), 
         rtbIs2   = ifelse(as.integer(mdl_data.sens$rtb) == 2L, 1, 0), 
@@ -485,11 +486,11 @@ They are only slightly better than just a median.
 
 ```{r oos.pred}
 m1.oos <- predict(m1, prd_sample[,-which(names(prd_sample) == 'answer')])$fit %>%
-  apply(MARGIN = 1, FUN = function(x) which(x == max(x))
+  apply(MARGIN = 1, FUN = function(x) which(x == max(x)))
 m2.oos <- predict(m2, prd_sample[,-which(names(prd_sample) == 'answer')])$fit %>%
-  apply(MARGIN = 1, FUN = function(x) which(x == max(x))
+  apply(MARGIN = 1, FUN = function(x) which(x == max(x)))
 m3.oos <- predict(m3, prd_sample[,-which(names(prd_sample) == 'answer')])$fit %>%
-  apply(MARGIN = 1, FUN = function(x) which(x == max(x))
+  apply(MARGIN = 1, FUN = function(x) which(x == max(x)))
 
 m1.m2.m3.oos <- setNames(cbind.data.frame(1:nrow(prd_sample), as.integer(prd_sample$answer),
                                           m1.oos, m2.oos, m3.oos, median(as.integer(fit_sample$answer))),
