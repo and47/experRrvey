@@ -1,0 +1,19 @@
+Package: experRrvey
+Title: (demo) experimenting with survey: EDA, evaluating how attributes influence answer
+Version: 0.0.0.9001
+Authors@R: 
+    person(given = "and",
+           family = "47",
+           role = c("aut", "cre"),
+           email = "and47@users.noreply.github.com")
+Description: To illustrate capabilities, not a complete work. Any liabilities are waived
+Depends: R (>= 3.5.0)
+Imports: haven, dplyr, ggplot2, reshape2, likert, psych, GPArotation, purrr,
+         magrittr, forcats, Hmisc, scales, tibble, zoo
+Suggests: testthat
+License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
+    license
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
