@@ -1,6 +1,6 @@
 Package: experRrvey
 Title: (demo) experimenting with survey: EDA, evaluating how attributes influence answer
-Version: 0.0.0.9001
+Version: 0.0.0.9002
 Authors@R: 
     person(given = "and",
            family = "47",
@@ -8,9 +8,11 @@ Authors@R:
            email = "and47@users.noreply.github.com")
 Description: To illustrate capabilities, not a complete work. Any liabilities are waived
 Depends: R (>= 3.5.0)
-Imports: haven, dplyr, ggplot2, reshape2, likert, psych, GPArotation, purrr,
-         magrittr, forcats, Hmisc, scales, tibble, zoo
-Suggests: testthat
+Imports: haven, dplyr, ggplot2, ggstance, reshape2, likert, psych, purrr,
+         magrittr, forcats, Hmisc, scales, tibble, zoo, 
+         radiant, MASS, ordinal, car, FactoMineR, factoextra, car, RVAideMemoire,
+         GPArotation
+Suggests: testthat, conjoint
 License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
     license
 Encoding: UTF-8
