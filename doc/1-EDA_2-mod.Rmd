@@ -1,0 +1,594 @@
+---
+title: "Survey EDA and included attributes/levels' effects on rating"
+output: 
+  html_document:
+    toc: TRUE                   # FALSE if you don't want a TOC
+    toc_depth: 3                # Depth of the TOC
+    toc_float: TRUE
+    df_print: paged
+bibliography: 'C:/and/work/hw_ds/inprog/inst/refs.bib'
+---
+
+# Introduction
+This package was prepared in short time and constitutes work in progress but allows to speed up efforts in working with survey data, in particular that coming from SPSS sav files or other in similar format. This is neither exhaustive, comprehensive or validated tool, rather just a demo of one way how some free open-source R functions can be tried, and needs to be reviewed and tested for mistakes. Hence, one way, someone who is interested in analyzing surveys can start is by referencing these functions, for which there are certainly better tutorials available online.
+
+EDA section provides an idea of how data can be aggregated and looked at to discover potential relationships. Next section demoes how after EDA and certain other data considerations, application of conjoint analysis (enabled by two freely available R packages) can be done giving a bit different results of how all possible combinations of categorical features are rated by respondents. However, not all attributes/levels are significant, and hence their measured impacts should not be taken as seriously. Finally, to focus on and refine initial estimates of more significant attributes/levels' effects on answer (omitting insignificant ones), some example ordinal regressions can be fitted based on factors suggested by conjoint analysis, and coefficients of a better one can be used in that way.
+
+To-do section mentions by no means complete limitations of this demo and directions of further research required to actually meaningfully apply any of this.
+
+```{r knitr_setup, include=FALSE}
+#library(knitr)
+knitr::opts_chunk$set(
+  comment = NA, 
+  cache = FALSE, 
+  message = FALSE, 
+  warning = FALSE,
+  dpi = 144
+)
+#library(pander)
+```
+
+## External packages
+
+Quick reasoning is provided for each direct use of an external package. Their further dependencies are not listed here:
+
+# Data: brief info & processing
+
+Two available datasets were used separately, however can be more useful combined to anyone when time permits, as suggested in section 4. Here they are loaded with the package along with dependencies listed in the DESCRIPTION. Alternatively, such data in `.sav` files can be read using `haven::read_sav`. There were observed conflicts of some of the dependencies with other popular packages, therefore if you run into them, you can always check by loading package in a separate fresh R session.
+
+```{r r_setup, echo = FALSE}
+library(radiant)
+#library(experRrvey)
+library(knitr)
+library(zoo)
+library(reshape2)
+```
+
+This survey was about a feature set of a possible product. Survey is based on respondents answers: at first to more general questions about themselves and problem a product aims to resolve. Secondly, each respondent ranks several random potential product feature combinations.
+
+```{r remove_later}
+# path to refs.bib (see above)
+setwd('C:/and/work/hw_ds/inprog')
+source('R/eda_funs.r')
+
+
+library(magrittr)
+library(dplyr)
+library(purrr)
+library(forcats)
+
+#library(reshape2)  # for melt
+library(ggstance)  # for positive_dodgev
+
+
+experiment_data <-
+  haven::read_sav('inst/extdata/experiment_data.sav')
+survey_data <-
+  haven::read_sav('inst/extdata/survey_data.sav')
+
+```
+
+```{r brief_data, eval=FALSE}
+survey_data %>%
+  select(response_id, d_urban:s_problem, d_marital:weights)
+
+experiment_data %>%
+  select(duration:social_proof) %>%
+  map(unique) %>% 
+  map(~t(t(.x)))
+```
+
+```{r survey_head}
+head(survey_data)
+
+```
+
+Data, which looks to be imported from SPSS, contains additional attributes, which can be used when working with it in R. Here we find actual question that were asked that may appear hidden at first. 
+
+```{r survey_attrs}
+
+class(survey_data)
+str(survey_data[,"response_id"])  # selected first column, which doesn't carry much other info
+str(survey_data[,"s_problem"])  # in contrast, columns with responses to questions have other valuable info
+
+# for questions that are missing text, it can be added manually
+attr(survey_data[["s_race"]], "label") <- "Preferred self-identified ethnicity"  
+
+# to view other attributes present in data:
+unique(unlist(sapply(survey_data, function(i) names(attributes(i)))))
+```
+
+We can also choose, which variables (questions-answers) to set to factors, and whether it's appropriate to somehow relevel them.
+Many questions have answer choices on a Likert-scale. Not all choices can be ranked by level though (e.g. ethnicity). Also, not all are symmetrical and/or equally-spaced (e.g. compare `d_education` and `behavior_a_1`)
+
+Some questions offer binary response (`d_parent`). Some are related: e.g., one response further details another (`d_parent` and `d_child*`, `past_coach` and `interest_coach`, `source_10` and `d_work_hours`, `behavior_*` and `behavior_a*`).
+One can notice different numbering in `behavior` and `behavior_a*`, re-iterating the need for manual processing / data review
+(e.g., `behavior_a_2` corresponds to `behavior_4`, this is easy to fix to avoid accidentally making mistakes.
+
+Further ideas: some questions offer NA/don't know as response (`d_work_schedule`), which may be treated similar to 'Neither agree' or 'disagree' on Likert, but these choices are in different ordering (last vs middle). Some answers have missing values (NAs).
+
+```{r survey_fcts}
+# fixing numbering
+names(survey_data)[grep("^behavior_[[:digit:]]{1,2}$", names(survey_data))] <-
+ paste('behavior', sep = "_", 1:length(grep("^behavior_[[:digit:]]{1,2}$", names(survey_data))))
+
+# almost each variable (question) is presented as labelled double <dbl+lbl>
+is_q <- sapply(survey_data, function(v) inherits(v, c("haven_labelled", "double")))
+is_q[c('s_region', 's_age')] <- TRUE  # two more categorical variables (questions), which are chr like response_id, not dbl+lbl, so adding manually here
+
+survey_data %<>% mutate(across(which(is_q), as_factor))  # converting dbl+lbl columns to factors (required for EDA, see ?calcIdx)
+
+# such conversion in bulk, requires manual fixes, here: not sure is placed in the middle of Likert scale
+survey_data %<>% mutate(across(starts_with("behavior_a_"),
+                               ~fct_rev(fct_relevel(.x, "I'm not sure", after = 2))))
+survey_data %<>% mutate(across(past_coach,
+                               ~fct_relevel(.x, "I am not sure", after = 1)))
+# here option "don't know" carries info equivalent to NA
+survey_data$d_work_schedule[
+ which(survey_data$d_work_schedule == "Don't know / not applicable")] <- NA
+
+```
+
+Similarly, for dataset with recorded responses about product's features, some minimal processing was done.
+
+```{r experiment_fcts}
+head(experiment_data)
+
+# converted to factors and corrected order and scale of levels
+experiment_data %<>% mutate(across(-response_id, as_factor))
+
+experiment_data$price %<>% fct_relevel(c("$20/month", "$30/month", "$40/month"))
+
+experiment_data$duration <-
+ factor(experiment_data$duration, 
+        levels = c('3 months', "6 months", "9 months", "12 months"))
+
+```
+
+
+# EDA
+
+Survey weights are provided, likely showing how representative was the sample relative to the total population. Let's briefly summarize only demographic variables that sound most relevant to the study, although it's good to check/consider all variables.
+
+```{r some_data_stats}
+survey_data %>% 
+ dplyr::select(hours, d_h_hnumber, d_parent, s_problem, s_hhincome) %T>%
+ {print(summary(.))} %>% 
+ psych::describe()  # alternatively, Hmisc::describe()
+
+xtabs(~ price + answer, data = experiment_data)
+```
+
+Some responses provided on the Likert scale can be visualized using a dedicated R package.
+```{r likert_plots}
+library(likert)
+
+survey_philosophy <-
+  survey_data %>%
+  select(response_id, contains('m1_philosophy'))
+
+survey_attitude <-
+  survey_data %>%
+    select(response_id, contains('m2_attitudes'))
+
+survey_behavior_a <-
+  survey_data %>%
+    select(response_id, contains('behavior_a'))
+```
+
+## Likert plots {.tabset}
+
+### Phlosophy
+```{r likert_plots1}
+plotLikertSorted(survey_philosophy)
+```
+
+### Attitude {.active}
+```{r likert_plots2}
+plotLikertSorted(survey_attitude)  # only a wrapper to minimally improve plots
+```
+
+### Behavior
+```{r likert_plots3, fig.height=8}
+plotLikertSorted(survey_behavior_a)
+```
+
+## Experiment data
+
+Despite survey targeting those with a problem that product aims to help with, there is a skew in response (rating), showing that many are sceptical regardless of the feature mix. In addition, variability in ratings between different feature sets from each respondent, show that many are not even changing their answer, which isn't helpful for modeling the responses.
+
+```{r y_plots, out.width=c('50%', '50%'), fig.show='hold', fig.cap="Prevalence in ratings (answer from respondents)", fig.topcaption=TRUE, fig.align='center'}
+ggplot(experiment_data[,"answer"], aes(x = answer)) + geom_bar() + 
+ geom_text(stat="count", vjust = -1, 
+           aes(label = sprintf("%1.2f%%", 100*(..count..)/sum(..count..)))) +
+ labs(x = "Answer (rating)", title = '') + coord_cartesian(clip = "off")
+
+ind_ans_rng <- experiment_data %>% group_by(response_id) %>%
+                summarise_all(~diff(range(as.integer(.)))) %>%
+                transmute(response_id = response_id, ind_answer_range = answer)
+
+ggplot(ind_ans_rng[,"ind_answer_range"], aes(x = ind_answer_range)) + geom_bar() +
+ geom_text(stat="count", vjust = -1, 
+           aes(label = sprintf("%1.2f%%", 100*(..count..)/sum(..count..)))) + 
+ labs(x = "Answer (rating) variability in each individuals' responses", title = '') +
+ coord_cartesian(clip = "off")
+
+```
+
+## Index function
+
+The `calcIdx()` function calculates the index of a level included in this variable in contrast to groups provided by levels of another variable. See `?calcIdx` for more info. 
+
+It can be used to find more divisive and therefore potentially more significant factors influencing the response.
+
+```{r calcidx_demo, fig.width=8}
+calcIdx(grpVar = "hours", idxVar = "s_problem", dataset = survey_data) %T>%   # omits NAs by default
+print() %>% 
+plotIdxPair(dtset = survey_data)
+
+calcIdx(grpVar = "price", idxVar = "answer", dataset = experiment_data) %>% 
+ arrange(idx) %>% knitr::kable()  # lower price is a favorable feature
+```
+
+Below function call loops over all variables and calculates indices based on each pair. This is more useful for finding relationships between different explanatory variables (e.g. `mdl_data`), as in below example we are really only interested in combinations of profiles with answer variable.
+```{r calcidx_loop, fig.width=8, warning=FALSE}
+# combined larger dataset, which can be used in modeling or a longer loop than below
+mdl_data <- left_join(experiment_data, survey_data, by = "response_id")
+
+expIdxsList <- calcIdxsAll(experiment_data[,-(1:2)]) # omit response_id & task
+# may take > 5 mins on a larger combined dataset (e.g. mdl_data)
+
+expIdxsTbl <- idxList2tbl(expIdxsList)  # convert list to tibble
+
+expIdxsTbl <- expIdxsTbl %>%  # more readable labels for plot
+                tidyr::unite(grp, c('grpVar', 'grpVal'), sep = ' : ') %>%
+                tidyr::unite(lvl, c('lvlVar', 'lvlVal'), sep = ' : ')
+
+ggplot(expIdxsTbl) + geom_density(aes(x = idx)) + 
+ geom_vline(xintercept = median(expIdxsTbl$idx, na.rm = T))
+
+ggplot(expIdxsTbl[grep('^answer', expIdxsTbl$lvl),], aes(grp, lvl, fill = idx)) +
+ geom_tile() + scale_fill_gradient(low = "blue",  high = "yellow") +
+ guides(x = guide_axis(angle = 90))
+# again shows that cheaper options are preferred, maybe also outcome2 & socialproof4
+
+kable(expIdxsList$outcome$answer)  # particular sub-tables can be easily accessed
+```
+
+This is not very good way to visualize the potential relationships, however it can be more useful on different data. A preference for lower price is confirmed but it's harder to see positive impact of outcome2 "breaking bad habits and creating new routines". Other groupings were also considered but weren't too informative either.
+```{r viz_relationships}
+ggplot(mdl_data, aes(x = price, y = outcome)) + 
+ geom_point(aes(color = answer), position = position_jitter()) + 
+ scale_color_manual(values = c("red",  "orange", "yellow", "green"))
+```
+
+Here we show how intensities of respondents and each individual response are obtained (calculation may take more than 10 minutes), so it is disabled by default and dataset comes pre-loaded. This can be used for grouping respondents, see section *To-do/More regressions incl. nested or conditional logit models* below on how this can be useful.
+
+<input type=button class=hideshow></input>
+```{r all_combos, eval = TRUE, out.width=c('50%', '50%'), fig.show='hold'}
+surveyIdxsTbl <- survey_data %>% select(-response_id, -weights) %>% 
+  calcIdxsAll() %>% idxList2tbl()  # takes > 5 mins, functions should be made more efficient using dplyr instead of loops
+
+# highlights how intense/radical are respondent's answers on average
+survey_data[,'r_id_intnsty'] <- survey_data %>% dplyr::select(-weights) %>% 
+  rateResponses(surveyIdxsTbl, onlyIntensities = TRUE) %>% select(last_col())
+
+# multiplies each response by its average index with relations to other responses
+survey_data_all_intnsts <- survey_data %>% dplyr::select(-weights, -r_id_intnsty) %>%
+  rateResponses(surveyIdxsTbl)  # may take up to ten minutes
+
+ggplot(survey_data[,c('response_id', 'r_id_intnsty')], aes(y = r_id_intnsty, x = response_id)) +
+ geom_point() + theme(axis.title = element_blank())
+
+r_id_intnsty.med <- round(median(survey_data$r_id_intnsty, na.rm = T), 2)
+ggplot(survey_data[,'r_id_intnsty']) + geom_density(aes(x = r_id_intnsty)) + 
+ geom_vline(xintercept = r_id_intnsty.med) + geom_text(aes(x = r_id_intnsty.med,
+   label = paste("median =", r_id_intnsty.med)), y = 2, angle = 90, vjust = -0.2)
+
+# split questions by approximate index scale (for comparability within groups)
+svey_intnsts <- melt(survey_data_all_intnsts) %>% arrange(value)
+
+svey_intnsts$variable <- as.character(svey_intnsts$variable)
+svey_intnsts$category <- "demographics"
+svey_intnsts$category[grep("_a_", svey_intnsts$variable)] <- "behavior_ans"
+svey_intnsts$category[grep("m1_philos|m2_attit", svey_intnsts$variable)] <- "psychology"
+svey_intnsts$category[grep("source|behavior_[1-9]|m2_aware", svey_intnsts$variable)] <- 
+ "source_awareness_behavior_Q"
+svey_intnsts$category %<>% as_factor()
+```
+```{r boxplots}
+# we can see more divisive groups/indices such m2_awareness_4 or 5 and d_employment
+ggplot(svey_intnsts, aes(y = value, x = variable)) + geom_boxplot() +
+  facet_wrap(facets = ~category, scale = "free", dir = 'v', labeller = label_both) +
+  guides(x =  guide_axis(angle = 90))
+```
+
+
+# Modeling
+
+Several approaches are tried here, however the provided dataset is more suitable for conjoint analysis, although it is not the first one listed here.
+
+## Preparing variables
+
+In the provided dataset `price` (per month) and `duration` (months) are related, and it may be beneficial to consider their combined effect. Both affect the overall (total) cost. Reminder: in Section 1 levels for price were reordered, and a missing one (9 months) for duration was added (to make levels equally spaced).
+
+Unlike other features, `price` and `duration` are now ordered and equally spaced, so they can also be used as nominal not categorical variables in modeling. Same for `totalCost`.
+
+```{r mdl_data_extra_vars}
+mdl_data %<>% mutate(totalCost = as.integer(duration) * 3 *
+                                   (as.integer(price) + 1) * 10)
+unique(mdl_data[,c('price', 'duration', 'totalCost')]) %>% arrange(totalCost)
+```
+
+## Regression
+"For estimating the utilities for each attribute level using ratings-based full profile tasks, linear regression may be appropriate. Bayesian estimators are also very popular." [@enwiki:1009864209].
+
+Ordinal logistic regression is appropriate for a categorical variable with rating (ordered and equally-spaced: from one to four) [@agresti2010analysis]. Several packages including `stats::glm` and `rms::lrm` implement a function allowing to fit this model, in particular `MASS::polr` and `ordinal::clm` were considered. Given that there were no repeated measurements, `clmm` was not taken into consideration (panel data approach).
+
+Survey data carries *weights*, which should probably be also included in the model. For the provided dataset they tend to improve fit. In case of more information (parameters) being available about complex survey design (sampling, clustering, stratification methods, etc), some dedicated packages such as `survey`[@lumley2011complex] and `srvyr` can be considered to be used.
+
+```{r reg_try}
+#library(MASS)  # polr
+ord_reg_naive <- MASS::polr(formula = answer ~ price + duration + rtb + offer + outcome + social_proof,
+                      data = mdl_data, weights = mdl_data$weights, Hess = TRUE)  # method = 'probit' can also be tried
+
+ord_reg_naive %>% summary() %T>% print() %>% 
+{round(pnorm(abs(coef(.)[, "t value"]), lower.tail = F) * 2, dig = 2)}  # p-values
+
+impacts <- ord_reg_naive$coefficients  # ordinal regression already produces standardized coeffs (betas)
+# att_infl['totalCost'] <- att_infl['totalCost'] *  # except, for $ totalCost (if included)
+#                           sd(as.integer(mdl_data$totalCost)) /  # as it's nominal
+#                           sd(as.integer(mdl_data$answer))
+
+bp <- barplot(sort(abs(impacts)), names.arg = FALSE,
+              col = c('red', 'green')[1 + (abs(impacts) < impacts[order(abs(impacts))])])
+title(sub = "Standardized coefficients (top negative and positive impacts)", line = 1)
+axis(side = 1, hadj = -0.06, at = bp, las = 2, tick = F, cex.axis = 0.8, padj = 0.25, font = 11,
+     labels = format(names(sort(abs(impacts))), width = max(nchar(names(impacts)))))
+```
+
+The issue with this approach is that most of the variables are obviously insignificant, but it does provide some idea, e.g. again showing positive impact of lowest price. 
+
+## Dimensionality reduction
+
+When dealing with many variables it is often the case that several variables are related and represent a common, underlying factor. To find such underlying factors, we can use a factor analysis. Principal component analysis is also used when several questions or variables reflect a common factor and they should be combined into a single variable, e.g. during the statistical analysis of the data. Thus, principal component analysis can be used to collapse different variables (or questions) into one [@schweinberger2020survey].  
+
+Given that variance doesn't change much within groups Linear Discriminant Analysis (LDA) was considered here. Also, given that we are dealing with more than two categorical variables, Multiple Correspondence Analysis (MCA) was tried. However, these attempts do not appear successful at first glance. For `MASS::lda`, even if they were, coefficients are standardized (the value for each discriminant function is scaled so that their mean value is zero and its variance is one), but `predict` can be used to both test the performance (e.g. by splitting dataset in two parts: fitting and out-of-sample) and more practically calculate the impact, if interpretation is otherwise difficult. Some guidance is available [here] (https://rstudio-pubs-static.s3.amazonaws.com/35817_2552e05f1d4e4db8ba87b334101a43da.html). 
+
+```{r dim_red}
+
+#library(psych)  # dimensionality reduction:
+#library(GPArotation)
+library(FactoMineR)  
+library(factoextra)
+
+library(car)
+#library(Hmisc)
+library(RVAideMemoire)
+
+library(zoo)
+#library(survival)
+
+#library(mvtnorm) ## ? lr4, boot, coxme, knitr, leaps, lmtest, Matrix,
+        #MatrixModels, rgl (>= 0.93.960), sandwich, SparseM, survival,
+        #survey, scales
+#library(tibble)
+#library(Formula)
+#library(conjoint)
+
+experiment_data %>% dplyr::select(-response_id) %>% group_by(answer) %>%
+                    summarise_all(~sd(as.integer(.)))
+# variance doesn't change much within groups, can try LDA
+
+# due to missing duration = 9 months (3, 6, 12 present):
+LDA_answer <- MASS::lda(answer ~ ., mutate(experiment_data[,-(1:2)],
+                                           duration = as.integer(duration)))
+# suggests bad impact of higher prices, rtb2 and rtb4, sprf3,
+plot(LDA_answer)  # looks rather messy
+
+
+MCA_ans <- MCA(experiment_data[,-(1:2)], ncp = 5, graph = TRUE)
+summary(MCA_ans)  # shows that price should be included in a model separately?
+
+fviz_screeplot(MCA_ans, addlabels = TRUE, ylim = c(0, 45))  # no useful results
+```
+
+## Conjoint analysis
+
+Implementation was found in `conjoint`[@bartlomowicz2019conjoint], `radiant`[@rmarketing], and `choicetools`[@Chapman] packages. Only the use of the first two is shown here. Also, only respondents who rated the profile at least once other than "1", were selected. This is due to, when fitting regressions on full sample, having specifications (estimates), which lead to models always predicting the same (e.g. "1") answer. Conjoint analysis also uses linear regression, hence sample adjustment is performed already here.
+
+The utilities computed below show how each level relatively influences the respondent's rating of product's profile, i.e. likeliness to download. 
+
+Accuracy measures such as adjusted R^2 are reported inline.
+
+```{r cnjnt}
+
+# filter out respondents that always rate everything "1"
+ans.resp.stats <-
+ mdl_data %>% group_by(response_id) %>%
+ summarise(stvty = diff(range(as.integer(answer))), maxAns = max(as.integer(answer)))
+
+mdl_data.sens <- mdl_data %>%  # stvty can also be used to slice sample; only maxAns is used below
+ filter(response_id %in% ans.resp.stats[ans.resp.stats$maxAns > 1,][["response_id"]])
+
+#experim_dt.sens <- experiment_data %>%  # for runConjoint, which requires tibble
+# filter(response_id %in% ans.resp.stats[ans.resp.stats$maxAns > 1,][["response_id"]])
+
+nrow(mdl_data.sens) / nrow(mdl_data)  # cuts sample by more than 1/4
+
+summary(mdl_data.sens$answer)  # now almost symmetric sample
+
+# conjoint::Conjoint is commented out as it takes longer to run and produces many plots
+# it produces slightly different results than radiant::conjoint, reasons for which needs to be learnt
+#sel.smpl.cnjnt <- invisible(
+#runConjoint(experim_dt.sens[spl_indxs,], yCol = "answer",
+#           fctCols = c("price", "duration", "offer", "outcome", "social_proof", "rtb")))
+
+# alternatively can use radiant package:
+sel.smpl.cnjnt.rad <- 
+  conjoint(mdl_data.sens, rvar = "answer", evar = c(
+                               "price", "duration", "offer", "outcome", "social_proof", "rtb"))
+sel.smpl.cnjnt.rad$model_list$full$tab$PW %>% as_tibble(rownames = NULL)
+```
+
+Results of `caImportance` function call show each attribute's relative impact (sums to 100%).
+```{r attr_impacts}
+# This function has side effects (sets global options). Will change output from radiant::conjoint
+savedTbl <- sel.smpl.cnjnt.rad$model_list$full$coeff[,
+                    c('label', 'coefficient', 'p.value')]
+
+conjoint::caImportance(y = experiment_data[,'answer'], x = unique(experiment_data[,
+            c("price", "duration", "offer", "outcome", "social_proof", "rtb")]))
+```
+
+## Enhanced regressions
+
+Coefficients' significance provided by conjoint analysis inspired better model specifications that were fitted before.
+More precise estimation of most material (scale of impact) and significant (certainty) influences can be obtained from regression coefficients (betas), compared to conjoint analysis above.
+
+```{r cnjnt_signif, message=FALSE, results='asis'}
+savedTbl # otherwise significance replaced with NAs
+```
+
+New categorical (dummy) variables are prepared, alternatively e.g. `I(rtb == 3)` can be used in formulas. Sample is split into fitting (90%) and performance testing (10%) parts.
+
+```{r ord_reg}
+mdl_data.sens %<>%
+ cbind(priceUSD = (as.integer(mdl_data.sens$price) + 1) * 10,
+       price3   = ifelse(as.integer(mdl_data.sens$price) == 3L, 1, 0),
+       durMns   = as.integer(mdl_data.sens$duration) * 3,
+       dur6M   = ifelse(as.integer(mdl_data.sens$duration) == 2L, 1, 0),
+       sprf1    = ifelse(as.integer(mdl_data.sens$social_proof) == 1L, 1, 0), 
+       sprf4    = ifelse(as.integer(mdl_data.sens$social_proof) == 4L, 1, 0), 
+       rtbIs2   = ifelse(as.integer(mdl_data.sens$rtb) == 2L, 1, 0), 
+       rtbIs4   = ifelse(as.integer(mdl_data.sens$rtb) == 4L, 1, 0),
+       rtbIs5   = ifelse(as.integer(mdl_data.sens$rtb) == 5L, 1, 0),
+       offer1   = ifelse(as.integer(mdl_data.sens$offer) == 1L, 1, 0), 
+       offer5   = ifelse(as.integer(mdl_data.sens$offer) == 5L, 1, 0), 
+       outIs2   = ifelse(as.integer(mdl_data.sens$outcome) == 2L, 1, 0), 
+       outIs3   = ifelse(as.integer(mdl_data.sens$outcome) == 3L, 1, 0)) 
+        
+# split 10% of sample into out-of-sample (used for prediction performance measurement, not fitting)
+spl_indxs <- sample(1:nrow(mdl_data.sens), 0.9 * nrow(mdl_data.sens), replace = FALSE)
+fit_sample <- mdl_data.sens[spl_indxs,]
+prd_sample <- mdl_data.sens[-spl_indxs,]
+
+
+
+# diverse models (in terms of regressors, test results) are selected below,
+# it is more interesting to check in oos performance than select purely on fit
+# (e.g. lowest IC)
+library(ordinal)
+library(car)
+m1 <-
+clm(formula = answer ~ sprf1 + rtbIs2 + offer1 + I(totalCost < 240),
+     data = fit_sample, weights = fit_sample$weights)
+m1 %>% summary()  # rtbIs4, outIs3, dur3 marginal
+m1 %>% Anova(type = "II")  # priceUSD marginal
+
+m2 <-
+clm(formula = answer ~ sprf4 + rtbIs5 + offer1 + price3 + dur6M,
+     data = fit_sample, weights = fit_sample$weights)
+m2 %>% summary()  # sprf4, rtbIs5 marginal
+m2 %>% Anova(type = "II")  # price3, dur3 marginal
+
+
+m3 <-
+clm(formula = answer ~ sprf4 + rtbIs4 + offer5 + priceUSD + dur6M,
+     data = fit_sample, weights = fit_sample$weights)
+m3 %>% summary()  # outIs3 insignificant; sprf4 marginal
+m3 %>% Anova(type = "II")  # outIs3 insignificant; priceUSD marginal
+```
+
+There quickly fitted models never project most negative/positive answer (1, 4), and are too conservative.
+They are only slightly better than just a median.
+
+
+```{r oos.pred}
+m1.oos <- predict(m1, prd_sample[,-which(names(prd_sample) == 'answer')])$fit %>%
+ apply(MARGIN = 1, FUN = function(i) which(i == max(i)))
+m2.oos <- predict(m2, prd_sample[,-which(names(prd_sample) == 'answer')])$fit %>%
+ apply(MARGIN = 1, FUN = function(i) which(i == max(i)))
+m3.oos <- predict(m3, prd_sample[,-which(names(prd_sample) == 'answer')])$fit %>%
+ apply(MARGIN = 1, FUN = function(i) which(i == max(i)))
+
+m1.m2.m3.oos <- setNames(cbind.data.frame(1:nrow(prd_sample), as.integer(prd_sample$answer),
+                                          m1.oos, m2.oos, m3.oos, median(as.integer(fit_sample$answer))),
+                         c("obs", "actuals", "M1.sp1_rtb2_off1_TC_lt_240",
+                           "M2.sp4_rtb5_off1_p3_dur6M", 
+                           "M3.sp4_rtb4_off5_USD_du6M", "Benchmark_median"))
+
+ggplot(melt(m1.m2.m3.oos, id = 'obs', variable.name = 'model'),
+       aes(x = obs, y = value, color = model)) + geom_point(shape = 3, position = position_dodgev(height=0.3))
+
+
+m1.m2.m3.oos.rsd <- transmute(m1.m2.m3.oos, obs = obs,
+                              M1.sp1_rtb2_off1_TC_lt_240 = actuals - M1.sp1_rtb2_off1_TC_lt_240,
+                              M2.sp4_rtb5_off1_p3_dur6M  = actuals - M2.sp4_rtb5_off1_p3_dur6M,
+                              M3.sp4_rtb4_off5_USD_du6M  = actuals - M3.sp4_rtb4_off5_USD_du6M,
+                              Benchmark_median = actuals - Benchmark_median)
+
+ggplot(melt(m1.m2.m3.oos.rsd, id = 'obs', variable.name = 'model', value.name = "residuals"),
+       aes(x = obs, y = residuals, color = model)) + 
+ geom_point(shape = 3, position = position_dodgev(height=0.3))
+
+ggplot(melt(m1.m2.m3.oos.rsd, id = 'obs', variable.name = 'model', value.name = "residuals"),
+       aes(x = residuals, fill = model)) + geom_bar(position = "dodge")
+
+as.data.frame(lapply(m1.m2.m3.oos[,-(1:2)], function(mpred)
+    c(RMSE = radiant.model:::RMSE(mpred, m1.m2.m3.oos[[2]]), 
+      MAE = radiant.model:::MAE(mpred, m1.m2.m3.oos[[2]]))))
+
+exp(coefficients(m3))
+```
+For example, if model `M3` is considered to be better, the influence of levels is as follows:
+  * If socialproof 4 is featured, this increases the odds of response 4 by 8.45% compared to other responses.
+  * If rtb 4 is mentioned, this increases the odds of response 1 by 11.82% compared to other responses.
+
+# To-do
+## More regressions incl. nested or conditional logit models
+Exhaustive search, forward selection or other algorithms, e.g. provided within `leaps` R package, can be used to try fitting numerous regressions using combinations of variables and their interactions. More advanced regression modelling can be considered. For example, instead of balancing experiment data by ratings, a condition can be used of whether an individual tried apps before (`m2_awareness`) or severity of a problem (`s_problem`). This can easily be done on the combined dataset (`mdl_data`).
+
+Also, random effects (partial pooling), respondents with certain traits are part of populations with such traits with some deviation (randomness). Multilevel frequentist models - make use of individual responses as well as aggregated into groups of individuals by certain unifying criteria (e.g., `survey_data` response). Rating can then be explained by both product's profile and respondent's profile.
+
+One such prominent example can be individual/group utility functions given diverse income (`s_hhincome`, `d_employment`, `d_urban`, `d_education`) and risk (`s_age`, family status such as `d_marital` or `d_parent`) profiles of the respondents. In other words, price elasticity is likely to differ across societal stratas, and this can be taken into account, improving the way model controls for price and estimates impacts of other product features.
+
+Latent variable's transformation. Instead of modelling rating (level) directly, we can focus more on how individual respondent's or group's responses change when different feature sets are presented.
+
+## Model testing
+Further validation of fitted models is required to confirm meeting the assumptions including stability tests (fitting on randomized samples and verifying significance of estimates and values of coefficients) and residual analysis (Cook's distance, variance, etc). Other and more comprehensive aggregated measures of model performance should be used, e.g. McFadden's Pseudo-R^2, BIC, AICc, etc.
+
+## Variable testing
+Oftentimes several questions in one questionnaire aim to tap into the same cognitive concept or attitude or whatever we are interested in. The answers to these related questions should be internally consistent, i.e. the responses should correlate strongly and positively. Two of such measures are Cronbach’s alpha and McDonald's omega [@schweinberger2020survey]. The outcome of the Kruskal–Wallis test tells you if there are differences among the groups, which is well applicable to categorical data [@mangiafico2016summary].
+
+## Hierarchical Bayes estimation
+
+Hierarchical Bayesian procedures are nowadays relatively popular [in conjoint analysis] as well [@enwiki:1009864209]. It is typically used for choice models to estimate a mixed effects model. The upper level comprises fixed effects estimates for the sample, while the lower level represents estimates for each individual respondent within the overall distribution. The individual-level estimates are based on the group of multiple observations for each respondent [@Chapman].
+
+## Support Vector Machine (SVM)
+Evgeniou et al. [@Evgeniou, 2005] propose a Support Vector Machine (SVM) method from statistical learning theory to model preference in conjoint analysis. Although the authors do not address the issue of questionnaire design for conjoint analysis, the suggested estimation method can be highly nonlinear and robust to noise, which usually happens when there is a large number of attributes, or interactions among different levels and attributes, or incomplete information about choices. The SVM method formulates an optimization procedure where an appropriate cost function is minimized without assuming a particular probabilistic distribution for the data. This differs from traditional conjoint estimation approaches such as logistic regression and hierarchical Bayesian methods. [@rao2014applied, p. 216]
+
+## Random Forests
+Existing random forest variants for ordinal outcomes, such as Ordinal Forests and Conditional Inference Forests, and novel random forest variants that do not rely on translation of ordinal measurements into artificial continuous scores [@PMID:32764162].
+
+
+# References
+
+
+
+<script>
+$( "input.hideshow" ).each( function ( index, button ) {
+  button.value = 'Hide Output';
+  $( button ).click( function () {
+    var target = this.nextSibling ? this : this.parentNode;
+    target = target.nextSibling.nextSibling.nextSibling.nextSibling;
+    if ( target.style.display == 'block' || target.style.display == '' ) {
+      target.style.display = 'none';
+      this.value = 'Show Output';
+    } else {
+      target.style.display = 'block';
+      this.value = 'Hide Output';
+    }
+  } );
+} );
+</script>
