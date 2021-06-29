@@ -37,7 +37,7 @@ calcIdx <- function(grpVar, idxVar, dataset, resp.na.rm = TRUE, group.na.rm = TR
            N = count(dataset,
                      !!as.name(idxVar), .drop = group.na.rm)[['n']],
            idx = rel.freq / (N / nrow(dataset) * 100) * 100) %>%
-    ungroup() %>% dplyr::select(-rel.freq, -N, -n)
+    ungroup() %>% select(-rel.freq, -N, -n)
 }
 
 #'
@@ -74,7 +74,7 @@ plotLikertSorted <- function(savtibble, delim = " - ") {
 
  survLP <- savtibble[,-1] %>%
            as.data.frame() %>%
-           likert() %>% plot(ordered = T)  # crashed RStudio once, unstable?
+           likert::likert() %>% plot(ordered = T)  # crashed RStudio once, unstable?
 
  return(survLP)
 }
@@ -110,7 +110,7 @@ idxList2tbl <- function(idxL) {
                                        lvlVal = !!as.name(k_name)))) %>%
   Reduce(f = rbind) %>%
   Reduce(f = rbind) %>%  # unfortunately this is very slow, optimize with map
-  dplyr::select(grpVar, grpVal, lvlVar, lvlVal, idx) %>%
+  select(grpVar, grpVal, lvlVar, lvlVal, idx) %>%
   mutate(grpVal = as.character(grpVal), lvlVal = as.character(lvlVal)) %>% distinct()
 }
 
@@ -137,10 +137,10 @@ rateResponses <- function(sveyRes, idxset, weights = 1L, idxcol = 'idx', onlyInt
     sveyRespIdxs[,uniqColPairs[,i]] <- sveyRespIdxs[,uniqColPairs[,i]] +
      idxset %>% filter(grpVar == names(sveyRes[, uniqColPairs[,i]])[1] &
                        lvlVar == names(sveyRes[, uniqColPairs[,i]])[2]) %>%
-     dplyr::select("grpVal", "lvlVal", !!as.name(idxcol)) %>%
+     select("grpVal", "lvlVal", !!as.name(idxcol)) %>%
      {.[match(tidyr::unite(sveyRes[, uniqColPairs[,i]], "")[[1]],
               tidyr::unite(.[,c('grpVal', 'lvlVal')], "")[[1]]),][[idxcol]]} %>%
-     na.fill(0)
+     zoo::na.fill(0)
   }
   sveyRespIdxs <- sveyRespIdxs / (ncol(uniqColPairs) - 1)
   if (onlyIntensities) sveyRes[,] <- 1
